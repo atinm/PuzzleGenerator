@@ -16,6 +16,8 @@
         along with this program.  If not, see <https://www.gnu.org/licenses/>.
 =#
 
+using JSON
+using UUIDs
 
 """
     isgoodpuzzle(g::SimpleGame, e::Engine, nodes::Int)
@@ -109,8 +111,8 @@ use as puzzles.
 
 The return value is a (possibly empty) vector of FEN strings.
 """
-function puzzlesingame(g::SimpleGame, e::Engine)::Vector{String}
-    result = String[]
+function puzzlesingame(g::SimpleGame, e::Engine)::Vector{Dict}
+    result = Dict[]
 
     # Go through the game, checking each position to see whether it could be
     # suitable for a puzzle.
@@ -124,21 +126,45 @@ function puzzlesingame(g::SimpleGame, e::Engine)::Vector{String}
             # Search gradually more deeply, verifying that the position
             # satisfies all criterions for a good puzzle at all depths.
             nodes = 1_000_000
-            while nodes <= 40_000_000
+            while nodes <= 20_000_000
                 if !isgoodpuzzle(g, e, nodes)
                     ispuzzlecandidate = false
                     break
                 end
-                nodes = round(Int, 1.4 * nodes)
+                print('^')
+                nodes = round(Int, 1.75 * nodes)
             end
 
             # If the puzzle still looks OK, save it to the result vector.
             if ispuzzlecandidate
-                push!(result, fen(board(g)))
+                if !isatbeginning(g)
+                    back!(g)
+                    m = nextmove(g)
+                    f = fen(board(g))
+                    forward!(g)
+                    nodes = 1_000_000
+                    searchresult = mpvsearch(g, e, nodes = nodes, pvs = 1)
+                    # extract the winning move
+                    win = searchresult[1].pv[1]
+                    push!(result,
+                        Dict(:id => string(UUIDs.uuid4()),
+                             :event => headervalue(g, "Event"),
+                             :site => headervalue(g, "Site"),
+                             :date => headervalue(g, "Date"),
+                             :round => headervalue(g, "Round"),
+                             :white => headervalue(g, "White"),
+                             :black => headervalue(g, "Black"),
+                             :result => headervalue(g, "Result"),
+                             :moves => [tostring(m), tostring(win)],
+                             :fen => f,
+                             :tags => ""))
+                    print('+')
+                end
             end
         end
 
         # Go forward to the next position in the game, and continue the loop.
+        print('.')
         forward!(g)
     end
 
@@ -161,7 +187,8 @@ function puzzlesfrompgn(pgnfilename::String, outputfilname::String)
         for pz ∈ puzzlesingame(g, e)
             puzzlecount += 1
             open(outputfilname, "a") do outputfile
-                println(outputfile, pz)
+                JSON.print(pz, 4)
+                JSON.print(outputfile, pz)
             end
         end
         println("$gamecount games, $puzzlecount puzzles")
